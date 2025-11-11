@@ -117,8 +117,7 @@ if uploaded_file is not None:
         chart_options = {
             "DIF趋势图": {"y": "DIF百分比", "color": "#26D19C", "title": "DIF数据变化趋势"},
             "RAW趋势图": {"y": "RAW百分比", "color": "#FFA500", "title": "RAW数据变化趋势"},
-            "双系列对比": {"y": None, "color": None, "title": "DIF与RAW数据对比"},
-            "散点图": {"y": "RAW百分比", "color": "是否入耳", "title": "DIF vs RAW 散点图"}
+            "双系列对比": {"y": None, "color": None, "title": "DIF与RAW数据对比"}
         }
 
         selected_chart = st.radio(
@@ -164,10 +163,8 @@ if uploaded_file is not None:
             if 'DIF百分比' in df_filtered.columns and 'RAW百分比' in df_filtered.columns:
                 # 双线图
                 fig = make_subplots(
-                    rows=2, cols=1,
-                    subplot_titles=('📈 数据趋势对比', '📊 数据点分布'),
-                    vertical_spacing=0.12,
-                    row_heights=[0.7, 0.3]
+                    rows=1, cols=1,
+                    subplot_titles=('📈 DIF与RAW数据对比',)
                 )
 
                 # DIF线
@@ -197,99 +194,28 @@ if uploaded_file is not None:
                     row=1, col=1
                 )
 
-                # 散点图
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_filtered['DIF百分比'],
-                        y=df_filtered['RAW百分比'],
-                        mode='markers',
-                        name='DIF vs RAW',
-                        marker=dict(
-                            size=10,
-                            color='#9370DB',
-                            opacity=0.7,
-                            line=dict(width=1, color='white')
-                        ),
-                        text=[f"点#{i+1}" for i in df_filtered.index],
-                        hovertemplate='<b>%{text}</b><br>DIF: %{x}%<br>RAW: %{y}%<extra></extra>'
-                    ),
-                    row=2, col=1
-                )
-
                 fig.update_layout(
-                    height=700,
+                    height=500,
                     showlegend=True,
                     hovermode='closest'
                 )
                 fig.update_xaxes(title_text="数据序号" if '时间' not in df_filtered.columns else "时间", row=1, col=1)
                 fig.update_yaxes(title_text="百分比 (%)", row=1, col=1)
-                fig.update_xaxes(title_text="DIF (%)", row=2, col=1)
-                fig.update_yaxes(title_text="RAW (%)", row=2, col=1)
 
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.error("❌ 数据中缺少DIF百分比或RAW百分比列")
 
-        elif selected_chart == "散点图":
-            if 'DIF百分比' in df_filtered.columns and 'RAW百分比' in df_filtered.columns:
-                fig = px.scatter(
-                    df_filtered,
-                    x='DIF百分比',
-                    y='RAW百分比',
-                    color='是否入耳' if '是否入耳' in df_filtered.columns else None,
-                    size='左右耳' if '左右耳' in df_filtered.columns else None,
-                    hover_data=['时间' if '时间' in df_filtered.columns else df_filtered.index, '用户名', 'MAC地址'],
-                    title="DIF vs RAW 散点图",
-                    labels={
-                        'DIF百分比': 'DIF (%)',
-                        'RAW百分比': 'RAW (%)'
-                    }
-                )
-                fig.update_layout(height=500)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.error("❌ 数据中缺少DIF百分比或RAW百分比列")
 
         st.markdown("---")
 
-        # 数据点详情
-        st.subheader("🔍 数据点详情")
-
-        with st.expander("点击查看具体数据点", expanded=False):
+        # 筛选后数据详情（与图表筛选联动）
+        st.markdown("📊 **与图表筛选相同条件下的数据详情**")
+        with st.expander("点击查看筛选后的完整数据", expanded=False):
             if len(df_filtered) > 0:
-                # 选择数据点
-                point_options = []
-                for i in df_filtered.index[:100]:  # 最多显示100个点
-                    dif_val = df_filtered.loc[i, 'DIF百分比'] if 'DIF百分比' in df_filtered.columns else "N/A"
-                    raw_val = df_filtered.loc[i, 'RAW百分比'] if 'RAW百分比' in df_filtered.columns else "N/A"
-                    point_options.append(f"点 #{i+1} (DIF: {dif_val}%, RAW: {raw_val}%)")
-
-                if len(df_filtered) > 100:
-                    point_options.append("... (还有更多数据点)")
-
-                selected_idx = st.selectbox(
-                    "选择数据点",
-                    options=list(df_filtered.index[:100]),
-                    format_func=lambda x: f"点 #{x+1} (DIF: {df_filtered.loc[x, 'DIF百分比']}%, RAW: {df_filtered.loc[x, 'RAW百分比']}%)" if 'DIF百分比' in df_filtered.columns and 'RAW百分比' in df_filtered.columns else f"点 #{x+1}"
-                )
-
-                if selected_idx is not None:
-                    row_data = df_filtered.loc[selected_idx]
-
-                    # 显示详情
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.write("**📋 基础信息**")
-                        for col in ['用户名', 'MAC地址', '左右耳', '时间', '是否入耳']:
-                            if col in row_data and pd.notna(row_data[col]):
-                                st.write(f"• **{col}**: {row_data[col]}")
-
-                    with col2:
-                        st.write("**📊 传感器数据**")
-                        for col in ['DIF原始', 'DIF数值', 'DIF百分比', 'RAW原始', 'RAW数值', 'RAW百分比']:
-                            if col in row_data and pd.notna(row_data[col]):
-                                st.write(f"• **{col}**: {row_data[col]}")
+                st.dataframe(df_filtered, use_container_width=True, height=300)
+            else:
+                st.info("当前筛选条件下没有数据，请调整筛选条件")
 
         st.markdown("---")
 
@@ -340,7 +266,6 @@ else:
     - **DIF趋势图**: 展示DIF数据变化
     - **RAW趋势图**: 展示RAW数据变化
     - **双系列对比**: 同时显示DIF和RAW，对比更明显
-    - **散点图**: 分析DIF和RAW的相关性
 
     #### 4️⃣ 数据交互
     - 点击"数据点详情"查看具体数值

@@ -1,0 +1,26 @@
+# 忽略所有文件
+*
+
+# 但不忽略这三个核心文件
+!csv_viewer.py
+!requirements.txt
+!README.md
+
+# 忽略目录
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 忽略所有其他文件
+!.gitignore
