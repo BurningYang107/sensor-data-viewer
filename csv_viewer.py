@@ -88,8 +88,26 @@ if uploaded_file is not None:
         else:
             col4.metric("时间范围", "无时间列")
 
-        # 数据预览
+        # 检测数值异常（>1000%）
+        abnormal_dif = 0
+        abnormal_raw = 0
+
+        if 'DIF百分比' in df.columns:
+            dif_values = pd.to_numeric(df['DIF百分比'].astype(str).str.replace('%', ''), errors='coerce')
+            abnormal_dif = (dif_values > 1000).sum()
+
+        if 'RAW百分比' in df.columns:
+            raw_values = pd.to_numeric(df['RAW百分比'].astype(str).str.replace('%', ''), errors='coerce')
+            abnormal_raw = (raw_values > 1000).sum()
+
+        total_abnormal = abnormal_dif + abnormal_raw
+
+        if total_abnormal > 0:
+            st.warning(f"⚠️ 检测到 {total_abnormal} 条数值异常数据（>1000%）")
+
+        # 数据预览 - 标红显示异常值
         with st.expander("🔍 查看原始数据", expanded=False):
+            # 直接显示原始数据，不应用样式
             st.dataframe(df, use_container_width=True, height=300)
 
         st.markdown("---")
@@ -221,8 +239,21 @@ if uploaded_file is not None:
         # 图表展示前添加分页控制，让图表显示当前页数据
         st.subheader("📊 数据分页")
 
+        # 先过滤掉数值异常（>1000%）
+        df_filtered_clean = df_filtered.copy()
+
+        if 'DIF百分比' in df_filtered_clean.columns:
+            dif_values = pd.to_numeric(df_filtered_clean['DIF百分比'].astype(str).str.replace('%', ''), errors='coerce')
+            df_filtered_clean = df_filtered_clean[dif_values <= 1000]
+
+        if 'RAW百分比' in df_filtered_clean.columns:
+            raw_values = pd.to_numeric(df_filtered_clean['RAW百分比'].astype(str).str.replace('%', ''), errors='coerce')
+            df_filtered_clean = df_filtered_clean[raw_values <= 1000]
+
+        st.info(f"📊 已自动剔除数值异常值，当前数据量：{len(df_filtered_clean)} 条")
+
         # 计算分页信息
-        total_rows = len(df_filtered)
+        total_rows = len(df_filtered_clean)
         rows_per_page = 30
         total_pages = (total_rows + rows_per_page - 1) // rows_per_page
 
@@ -242,7 +273,7 @@ if uploaded_file is not None:
         # 计算当前页数据范围
         start_idx = (current_page - 1) * rows_per_page
         end_idx = min(start_idx + rows_per_page, total_rows)
-        df_current = df_filtered.iloc[start_idx:end_idx].copy()
+        df_current = df_filtered_clean.iloc[start_idx:end_idx].copy()
 
         # 检测异常列
         abnormal_col = None
@@ -264,6 +295,10 @@ if uploaded_file is not None:
         abnormal_count = df_current['是否异常'].sum()
         if abnormal_count > 0:
             st.warning(f"⚠️ 检测到 {abnormal_count} 条异常数据，图表中将显示为红色点并断开连线")
+
+        # 显示当前页数据
+        with st.expander(f"🔍 查看第{current_page}页数据（共{len(df_current)}条）", expanded=False):
+            st.dataframe(df_current, use_container_width=True, height=300)
 
         st.caption(f"📄 当前显示第 {current_page} 页数据，共 {len(df_current)} 条")
 
@@ -304,7 +339,9 @@ if uploaded_file is not None:
 
             # 添加时间戳到hover显示
             if timestamp_col:
-                df_chart['时间戳'] = df_chart[timestamp_col].dt.strftime('%H:%M:%S')
+                df_chart['时间戳'] = df_chart[timestamp_col].apply(
+                    lambda t: t.strftime('%H:%M:%S') if pd.notna(t) else 'N/A'
+                )
 
             # 添加异常标记到hover
             df_chart['异常标记'] = df_chart['是否异常'].map({True: '⚠️ 异常数据', False: ''})
@@ -313,17 +350,15 @@ if uploaded_file is not None:
             fig = go.Figure()
 
             # 分段绘制数据（异常点断开连线）
-            df_chart['线段分组'] = 0  # 用于标识连续的数据段
+            df_chart['线段分组'] = 0
             segment_id = 0
 
-            for i, row in df_chart.iterrows():
+            for idx, (i, row) in enumerate(df_chart.iterrows()):
                 if row['是否异常']:
-                    # 异常点单独显示，不连接
                     segment_id += 1
                     df_chart.loc[i, '线段分组'] = segment_id
                 else:
-                    # 正常点，检查是否需要新的线段
-                    if i == 0 or df_chart.loc[i-1, '是否异常']:
+                    if idx == 0 or df_chart.iloc[idx-1]['是否异常']:
                         segment_id += 1
                     df_chart.loc[i, '线段分组'] = segment_id
 
@@ -345,12 +380,17 @@ if uploaded_file is not None:
                         hovertemplate='<b>异常数据</b><br>' +
                                       '数据点: %{x}<br>' +
                                       f'{y_col}: %{{y:.2f}}%<br>' +
-                                      '时间戳: %{customdata[0]}<br>' +
+                                      ('时间戳: %{customdata[0]}<br>' if timestamp_col else '') +
                                       '<extra></extra>',
-                        customdata=segment_data[['时间戳']].values
+                        customdata=segment_data[['时间戳']].values if timestamp_col else [['']] * len(segment_data)
                     ))
                 else:
                     # 正常数据段或异常点（但与其他点连接）
+                    customdata_cols = []
+                    if timestamp_col:
+                        customdata_cols.append('时间戳')
+                    customdata_cols.append('异常标记')
+
                     fig.add_trace(go.Scatter(
                         x=segment_data['数据点编号'],
                         y=segment_data[y_col],
@@ -361,16 +401,21 @@ if uploaded_file is not None:
                         hovertemplate='<b>%{fullData.name}</b><br>' +
                                       '数据点: %{x}<br>' +
                                       f'{y_col}: %{{y:.2f}}%<br>' +
-                                      '时间戳: %{customdata[0]}<br>' +
-                                      '<b style="color:red">%{customdata[1]}</b>' +
+                                      ('时间戳: %{customdata[0]}<br>' if timestamp_col else '') +
+                                      '<b style="color:red">%{customdata[' + ('1' if timestamp_col else '0') + ']}</b>' +
                                       '<extra></extra>',
-                        customdata=segment_data[['时间戳', '异常标记']].values
+                        customdata=segment_data[customdata_cols].values
                     ))
 
             # 设置X轴：显示时间戳
             if timestamp_col and len(df_current) > 0:
                 # 格式化时间戳为时分秒格式
-                time_labels = [t.strftime('%H:%M:%S') for t in df_current[timestamp_col]]
+                time_labels = []
+                for t in df_current[timestamp_col]:
+                    if pd.isna(t):
+                        time_labels.append('N/A')
+                    else:
+                        time_labels.append(t.strftime('%H:%M:%S'))
                 fig.update_xaxes(
                     tickmode='array',
                     tickvals=list(range(1, len(df_current) + 1)),
@@ -408,7 +453,9 @@ if uploaded_file is not None:
 
                 # 添加时间戳到hover显示
                 if timestamp_col:
-                    df_chart['时间戳'] = df_chart[timestamp_col].dt.strftime('%H:%M:%S')
+                    df_chart['时间戳'] = df_chart[timestamp_col].apply(
+                        lambda t: t.strftime('%H:%M:%S') if pd.notna(t) else 'N/A'
+                    )
 
                 # 添加异常标记
                 df_chart['异常标记'] = df_chart['是否异常'].map({True: '⚠️ 异常数据', False: ''})
@@ -417,12 +464,12 @@ if uploaded_file is not None:
                 df_chart['DIF线段分组'] = 0
                 segment_id = 0
 
-                for i, row in df_chart.iterrows():
+                for idx, (i, row) in enumerate(df_chart.iterrows()):
                     if row['是否异常']:
                         segment_id += 1
                         df_chart.loc[i, 'DIF线段分组'] = segment_id
                     else:
-                        if i == 0 or df_chart.loc[i-1, '是否异常']:
+                        if idx == 0 or df_chart.iloc[idx-1]['是否异常']:
                             segment_id += 1
                         df_chart.loc[i, 'DIF线段分组'] = segment_id
 
@@ -442,15 +489,20 @@ if uploaded_file is not None:
                                 hovertemplate='<b>DIF异常数据</b><br>' +
                                               '数据点: %{x}<br>' +
                                               'DIF百分比: %{y:.2f}%<br>' +
-                                              '时间戳: %{customdata[0]}<br>' +
+                                              ('时间戳: %{customdata[0]}<br>' if timestamp_col else '') +
                                               '<extra></extra>',
-                                customdata=segment_data[['时间戳']].values,
+                                customdata=segment_data[['时间戳']].values if timestamp_col else [['']] * len(segment_data),
                                 showlegend=True
                             ),
                             row=1, col=1
                         )
                     else:
                         # 正常数据段
+                        customdata_cols = []
+                        if timestamp_col:
+                            customdata_cols.append('时间戳')
+                        customdata_cols.append('异常标记')
+
                         fig.add_trace(
                             go.Scatter(
                                 x=segment_data['数据点编号'],
@@ -462,10 +514,10 @@ if uploaded_file is not None:
                                 hovertemplate='<b>DIF</b><br>' +
                                               '数据点: %{x}<br>' +
                                               'DIF百分比: %{y:.2f}%<br>' +
-                                              '时间戳: %{customdata[0]}<br>' +
-                                              '<b style="color:red">%{customdata[1]}</b>' +
+                                              ('时间戳: %{customdata[0]}<br>' if timestamp_col else '') +
+                                              '<b style="color:red">%{customdata[' + ('1' if timestamp_col else '0') + ']}</b>' +
                                               '<extra></extra>',
-                                customdata=segment_data[['时间戳', '异常标记']].values,
+                                customdata=segment_data[customdata_cols].values,
                                 showlegend=True
                             ),
                             row=1, col=1
@@ -475,12 +527,12 @@ if uploaded_file is not None:
                 df_chart['RAW线段分组'] = 0
                 segment_id = 0
 
-                for i, row in df_chart.iterrows():
+                for idx, (i, row) in enumerate(df_chart.iterrows()):
                     if row['是否异常']:
                         segment_id += 1
                         df_chart.loc[i, 'RAW线段分组'] = segment_id
                     else:
-                        if i == 0 or df_chart.loc[i-1, '是否异常']:
+                        if idx == 0 or df_chart.iloc[idx-1]['是否异常']:
                             segment_id += 1
                         df_chart.loc[i, 'RAW线段分组'] = segment_id
 
@@ -500,15 +552,20 @@ if uploaded_file is not None:
                                 hovertemplate='<b>RAW异常数据</b><br>' +
                                               '数据点: %{x}<br>' +
                                               'RAW百分比: %{y:.2f}%<br>' +
-                                              '时间戳: %{customdata[0]}<br>' +
+                                              ('时间戳: %{customdata[0]}<br>' if timestamp_col else '') +
                                               '<extra></extra>',
-                                customdata=segment_data[['时间戳']].values,
+                                customdata=segment_data[['时间戳']].values if timestamp_col else [['']] * len(segment_data),
                                 showlegend=True
                             ),
                             row=1, col=1
                         )
                     else:
                         # 正常数据段
+                        customdata_cols = []
+                        if timestamp_col:
+                            customdata_cols.append('时间戳')
+                        customdata_cols.append('异常标记')
+
                         fig.add_trace(
                             go.Scatter(
                                 x=segment_data['数据点编号'],
@@ -520,10 +577,10 @@ if uploaded_file is not None:
                                 hovertemplate='<b>RAW</b><br>' +
                                               '数据点: %{x}<br>' +
                                               'RAW百分比: %{y:.2f}%<br>' +
-                                              '时间戳: %{customdata[0]}<br>' +
-                                              '<b style="color:red">%{customdata[1]}</b>' +
+                                              ('时间戳: %{customdata[0]}<br>' if timestamp_col else '') +
+                                              '<b style="color:red">%{customdata[' + ('1' if timestamp_col else '0') + ']}</b>' +
                                               '<extra></extra>',
-                                customdata=segment_data[['时间戳', '异常标记']].values,
+                                customdata=segment_data[customdata_cols].values,
                                 showlegend=True
                             ),
                             row=1, col=1
@@ -538,7 +595,12 @@ if uploaded_file is not None:
                 # 设置X轴：显示时间戳
                 if timestamp_col and len(df_current) > 0:
                     # 格式化时间戳为时分秒格式
-                    time_labels = [t.strftime('%H:%M:%S') for t in df_current[timestamp_col]]
+                    time_labels = []
+                    for t in df_current[timestamp_col]:
+                        if pd.isna(t):
+                            time_labels.append('N/A')
+                        else:
+                            time_labels.append(t.strftime('%H:%M:%S'))
                     fig.update_xaxes(
                         tickmode='array',
                         tickvals=list(range(1, len(df_current) + 1)),
