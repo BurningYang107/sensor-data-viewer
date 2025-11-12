@@ -105,10 +105,17 @@ if uploaded_file is not None:
         if total_abnormal > 0:
             st.warning(f"⚠️ 检测到 {total_abnormal} 条数值异常数据（>1000%）")
 
-        # 数据预览 - 标红显示异常值
+        # 数据预览 - 支持点击展开完整数据
         with st.expander("🔍 查看原始数据", expanded=False):
-            # 直接显示原始数据，不应用样式
-            st.dataframe(df, use_container_width=True, height=300)
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                st.dataframe(df, use_container_width=True, height=300)
+
+            with col2:
+                st.write("")
+                if st.button("📊 点击查看完整数据", use_container_width=True):
+                    st.dataframe(df, use_container_width=True, height=None)
 
         st.markdown("---")
 
@@ -298,7 +305,15 @@ if uploaded_file is not None:
 
         # 显示当前页数据
         with st.expander(f"🔍 查看第{current_page}页数据（共{len(df_current)}条）", expanded=False):
-            st.dataframe(df_current, use_container_width=True, height=300)
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                st.dataframe(df_current, use_container_width=True, height=300)
+
+            with col2:
+                st.write("")
+                if st.button("📊 点击查看完整页数据", use_container_width=True):
+                    st.dataframe(df_current, use_container_width=True, height=None)
 
         st.caption(f"📄 当前显示第 {current_page} 页数据，共 {len(df_current)} 条")
 
@@ -631,10 +646,19 @@ if uploaded_file is not None:
         # 筛选后数据详情（与图表筛选联动）
         st.markdown("📊 **与图表筛选相同条件下的数据详情**")
         with st.expander("点击查看筛选后的完整数据", expanded=False):
-            if len(df_filtered) > 0:
-                st.dataframe(df_filtered, use_container_width=True, height=300)
-            else:
-                st.info("当前筛选条件下没有数据，请调整筛选条件")
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                if len(df_filtered_clean) > 0:
+                    st.dataframe(df_filtered_clean, use_container_width=True, height=300)
+                else:
+                    st.info("当前筛选条件下没有数据，请调整筛选条件")
+
+            with col2:
+                st.write("")
+                if len(df_filtered_clean) > 0:
+                    if st.button("📊 点击查看完整筛选数据", use_container_width=True):
+                        st.dataframe(df_filtered_clean, use_container_width=True, height=None)
 
         st.markdown("---")
 
