@@ -242,7 +242,26 @@ if uploaded_file is not None:
         # 计算当前页数据范围
         start_idx = (current_page - 1) * rows_per_page
         end_idx = min(start_idx + rows_per_page, total_rows)
-        df_current = df_filtered.iloc[start_idx:end_idx]
+        df_current = df_filtered.iloc[start_idx:end_idx].copy()
+
+        # 检测异常列
+        abnormal_col = None
+        for col in df_current.columns:
+            if '异常' in col or 'abnormal' in col.lower():
+                abnormal_col = col
+                break
+
+        # 如果有异常列，标记异常数据
+        if abnormal_col:
+            df_current['是否异常'] = df_current[abnormal_col].notna() & (df_current[abnormal_col] != '') & (df_current[abnormal_col] != 0)
+        else:
+            # 没有异常列时，默认无异常
+            df_current['是否异常'] = False
+
+        # 统计异常数据数量
+        abnormal_count = df_current['是否异常'].sum()
+        if abnormal_count > 0:
+            st.warning(f"⚠️ 检测到 {abnormal_count} 条异常数据，图表中将显示为红色点并断开连线")
 
         st.caption(f"📄 当前显示第 {current_page} 页数据，共 {len(df_current)} 条")
 
@@ -285,22 +304,66 @@ if uploaded_file is not None:
             if timestamp_col:
                 df_chart['时间戳'] = df_chart[timestamp_col].dt.strftime('%H:%M:%S')
 
-            fig = px.line(
-                df_chart,
-                x='数据点编号',
-                y=y_col,
-                title=title,
-                labels={
-                    y_col: f'{y_col.replace("百分比", "")} (%)',
-                    '数据点编号': f'第{current_page}页数据点'
-                },
-                markers=True,
-                hover_data=[col for col in ['用户名', 'MAC地址', '左右耳', '是否入耳', '时间戳'] if col in df_chart.columns]
-            )
-            fig.update_traces(
-                line=dict(color=color, width=3),
-                marker=dict(size=8, color=color)
-            )
+            # 添加异常标记到hover
+            df_chart['异常标记'] = df_chart['是否异常'].map({True: '⚠️ 异常数据', False: ''})
+
+            # 创建图表
+            fig = go.Figure()
+
+            # 分段绘制数据（异常点断开连线）
+            df_chart['线段分组'] = 0  # 用于标识连续的数据段
+            segment_id = 0
+
+            for i, row in df_chart.iterrows():
+                if row['是否异常']:
+                    # 异常点单独显示，不连接
+                    segment_id += 1
+                    df_chart.loc[i, '线段分组'] = segment_id
+                else:
+                    # 正常点，检查是否需要新的线段
+                    if i == 0 or df_chart.loc[i-1, '是否异常']:
+                        segment_id += 1
+                    df_chart.loc[i, '线段分组'] = segment_id
+
+            # 绘制每个线段
+            for segment in df_chart['线段分组'].unique():
+                segment_data = df_chart[df_chart['线段分组'] == segment]
+
+                # 检查这个段是否包含异常点
+                has_abnormal = segment_data['是否异常'].any()
+
+                if has_abnormal and len(segment_data) == 1:
+                    # 单个异常点，用红色
+                    fig.add_trace(go.Scatter(
+                        x=segment_data['数据点编号'],
+                        y=segment_data[y_col],
+                        mode='markers',
+                        name='异常数据',
+                        marker=dict(size=12, color='red', symbol='x'),
+                        hovertemplate='<b>异常数据</b><br>' +
+                                      '数据点: %{x}<br>' +
+                                      f'{y_col}: %{{y:.2f}}%<br>' +
+                                      '时间戳: %{customdata[0]}<br>' +
+                                      '<extra></extra>',
+                        customdata=segment_data[['时间戳']].values
+                    ))
+                else:
+                    # 正常数据段或异常点（但与其他点连接）
+                    fig.add_trace(go.Scatter(
+                        x=segment_data['数据点编号'],
+                        y=segment_data[y_col],
+                        mode='lines+markers',
+                        name='DIF' if y_col == 'DIF百分比' else 'RAW',
+                        line=dict(color=color, width=3),
+                        marker=dict(size=8, color=color),
+                        hovertemplate='<b>%{fullData.name}</b><br>' +
+                                      '数据点: %{x}<br>' +
+                                      f'{y_col}: %{{y:.2f}}%<br>' +
+                                      '时间戳: %{customdata[0]}<br>' +
+                                      '<b style="color:red">%{customdata[1]}</b>' +
+                                      '<extra></extra>',
+                        customdata=segment_data[['时间戳', '异常标记']].values
+                    ))
 
             # 设置X轴：显示时间戳
             if timestamp_col and len(df_current) > 0:
@@ -345,31 +408,124 @@ if uploaded_file is not None:
                 if timestamp_col:
                     df_chart['时间戳'] = df_chart[timestamp_col].dt.strftime('%H:%M:%S')
 
-                # DIF线
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_chart['数据点编号'],
-                        y=df_chart['DIF百分比'],
-                        mode='lines+markers',
-                        name='DIF',
-                        line=dict(color='#26D19C', width=3),
-                        marker=dict(size=6)
-                    ),
-                    row=1, col=1
-                )
+                # 添加异常标记
+                df_chart['异常标记'] = df_chart['是否异常'].map({True: '⚠️ 异常数据', False: ''})
 
-                # RAW线
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_chart['数据点编号'],
-                        y=df_chart['RAW百分比'],
-                        mode='lines+markers',
-                        name='RAW',
-                        line=dict(color='#FFA500', width=3),
-                        marker=dict(size=6)
-                    ),
-                    row=1, col=1
-                )
+                # 分段绘制DIF数据
+                df_chart['DIF线段分组'] = 0
+                segment_id = 0
+
+                for i, row in df_chart.iterrows():
+                    if row['是否异常']:
+                        segment_id += 1
+                        df_chart.loc[i, 'DIF线段分组'] = segment_id
+                    else:
+                        if i == 0 or df_chart.loc[i-1, '是否异常']:
+                            segment_id += 1
+                        df_chart.loc[i, 'DIF线段分组'] = segment_id
+
+                # 绘制DIF线段
+                for segment in df_chart['DIF线段分组'].unique():
+                    segment_data = df_chart[df_chart['DIF线段分组'] == segment]
+
+                    if segment_data['是否异常'].any() and len(segment_data) == 1:
+                        # 单个异常点，用红色
+                        fig.add_trace(
+                            go.Scatter(
+                                x=segment_data['数据点编号'],
+                                y=segment_data['DIF百分比'],
+                                mode='markers',
+                                name='DIF异常',
+                                marker=dict(size=10, color='red', symbol='x'),
+                                hovertemplate='<b>DIF异常数据</b><br>' +
+                                              '数据点: %{x}<br>' +
+                                              'DIF百分比: %{y:.2f}%<br>' +
+                                              '时间戳: %{customdata[0]}<br>' +
+                                              '<extra></extra>',
+                                customdata=segment_data[['时间戳']].values,
+                                showlegend=True
+                            ),
+                            row=1, col=1
+                        )
+                    else:
+                        # 正常数据段
+                        fig.add_trace(
+                            go.Scatter(
+                                x=segment_data['数据点编号'],
+                                y=segment_data['DIF百分比'],
+                                mode='lines+markers',
+                                name='DIF',
+                                line=dict(color='#26D19C', width=3),
+                                marker=dict(size=6, color='#26D19C'),
+                                hovertemplate='<b>DIF</b><br>' +
+                                              '数据点: %{x}<br>' +
+                                              'DIF百分比: %{y:.2f}%<br>' +
+                                              '时间戳: %{customdata[0]}<br>' +
+                                              '<b style="color:red">%{customdata[1]}</b>' +
+                                              '<extra></extra>',
+                                customdata=segment_data[['时间戳', '异常标记']].values,
+                                showlegend=True
+                            ),
+                            row=1, col=1
+                        )
+
+                # 分段绘制RAW数据
+                df_chart['RAW线段分组'] = 0
+                segment_id = 0
+
+                for i, row in df_chart.iterrows():
+                    if row['是否异常']:
+                        segment_id += 1
+                        df_chart.loc[i, 'RAW线段分组'] = segment_id
+                    else:
+                        if i == 0 or df_chart.loc[i-1, '是否异常']:
+                            segment_id += 1
+                        df_chart.loc[i, 'RAW线段分组'] = segment_id
+
+                # 绘制RAW线段
+                for segment in df_chart['RAW线段分组'].unique():
+                    segment_data = df_chart[df_chart['RAW线段分组'] == segment]
+
+                    if segment_data['是否异常'].any() and len(segment_data) == 1:
+                        # 单个异常点，用红色
+                        fig.add_trace(
+                            go.Scatter(
+                                x=segment_data['数据点编号'],
+                                y=segment_data['RAW百分比'],
+                                mode='markers',
+                                name='RAW异常',
+                                marker=dict(size=10, color='red', symbol='diamond'),
+                                hovertemplate='<b>RAW异常数据</b><br>' +
+                                              '数据点: %{x}<br>' +
+                                              'RAW百分比: %{y:.2f}%<br>' +
+                                              '时间戳: %{customdata[0]}<br>' +
+                                              '<extra></extra>',
+                                customdata=segment_data[['时间戳']].values,
+                                showlegend=True
+                            ),
+                            row=1, col=1
+                        )
+                    else:
+                        # 正常数据段
+                        fig.add_trace(
+                            go.Scatter(
+                                x=segment_data['数据点编号'],
+                                y=segment_data['RAW百分比'],
+                                mode='lines+markers',
+                                name='RAW',
+                                line=dict(color='#FFA500', width=3),
+                                marker=dict(size=6, color='#FFA500'),
+                                hovertemplate='<b>RAW</b><br>' +
+                                              '数据点: %{x}<br>' +
+                                              'RAW百分比: %{y:.2f}%<br>' +
+                                              '时间戳: %{customdata[0]}<br>' +
+                                              '<b style="color:red">%{customdata[1]}</b>' +
+                                              '<extra></extra>',
+                                customdata=segment_data[['时间戳', '异常标记']].values,
+                                showlegend=True
+                            ),
+                            row=1, col=1
+                        )
 
                 fig.update_layout(
                     height=500,
@@ -466,6 +622,7 @@ else:
     - **DIF趋势图**: 展示DIF数据变化
     - **RAW趋势图**: 展示RAW数据变化
     - **双系列对比**: 同时显示DIF和RAW，对比更明显
+    - **⚠️ 异常数据支持**: CSV中包含"异常"列时，异常数据点显示为红色×标记并断开连线
 
     #### 4️⃣ 数据交互
     - 点击"数据点详情"查看具体数值
@@ -488,6 +645,7 @@ else:
     | RAW百分比 | RAW数据百分比 | **必需** |
     | 是否入耳 | 入耳状态 | 可选 |
     | 左右耳 | 左耳/右耳标识 | 可选 |
+    | **异常** | **标记异常数据（任意非空值表示异常）** | **🎯 新增：可选** |
 
     ### ⚡ 快速开始
     1. 点击左侧"📤 文件上传"
