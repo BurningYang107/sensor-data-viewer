@@ -253,7 +253,9 @@ if uploaded_file is not None:
 
         # 如果有异常列，标记异常数据
         if abnormal_col:
-            df_current['是否异常'] = df_current[abnormal_col].notna() & (df_current[abnormal_col] != '') & (df_current[abnormal_col] != 0)
+            # 检查异常列的值：支持是/否、yes/no、true/false等格式
+            abnormal_values = df_current[abnormal_col].astype(str).str.lower()
+            df_current['是否异常'] = abnormal_values.isin(['是', 'yes', 'true', '异常', '1', 'error', 'err'])
         else:
             # 没有异常列时，默认无异常
             df_current['是否异常'] = False
